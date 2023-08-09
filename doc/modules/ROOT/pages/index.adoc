@@ -1,0 +1,230 @@
+ifdef::env-github[]
+:imagesdir: ../images
+endif::[]
+
+= Qb2 ROS2 driver
+
+== Overview
+
+The main function of the Qb2 ROS2 driver is to convert the point cloud data from the Qb2 into a ROS PointCloud2 msg.
+
+Two nodes are available:
+
+. *Qb2Driver*: The live node connects to one Qb2 and publishes the point cloud based on the scan pattern frequency set on the device.
+. *Qb2SnapshotDriver*: The snapshot node can connect to multiple Qb2s and request single frames from all connected Qb2s based on the frequency configured for the node. The driver sequentially requests the point clouds from each device and publishes all point clouds onto their respective topics simultaneously and with the same timestamp.
+
+== Supported devices
+
+The Blickfeld Qb2 ROS2 driver supports all variants of Blickfeld Qb2 devices.
+
+== Supported ROS2 Distributions
+
+The Blickfeld Qb2 ROS2 driver supports the following ROS2 distributions:
+
+* Foxy Fitzroy
+* Humble Hawksbill
+
+== Initial result
+
+.Same point cloud visualized in ROS2 rviz and the Qb2 WebGui. On the right the raw point cloud from the device is visualized and on the left the same point cloud in PointCloud2 is visualized.
+image::driver_result_1.png[]
+
+== Dependencies
+
+Before proceeding, make sure to install the following dependencies on your system:
+
+* ROS2:
+    ** https://docs.ros.org/en/foxy/Installation/Ubuntu-Install-Debians.html[ROS Foxy Installation]: Compatible with Ubuntu 20.04
+    ** https://docs.ros.org/en/humble/Installation/Ubuntu-Install-Debians.html[ROS Humble Installation]: Compatible with Ubuntu 22.04 
+* https://colcon.readthedocs.io/en/released/user/installation.html[Colcon]: Required for building the ROS workspace
+* https://protobuf.dev/[Protobuf]: >= v3.6.1 on Ubuntu 20.04 and newer versions, you can install protobuf using the system package manager:
++
+[source,bash,indent=1]
+----
+sudo apt install libprotobuf-dev
+----
+
+* https://grpc.io/[gRPC]: gRPC can also be installed on Ubuntu 20.04 and newer versions using the system package manager 
++
+[source,bash,indent=1]
+----
+sudo apt install libgrpc++-dev
+----
+
+== Build
+
+Before proceeding with the build, ensure that you `source` your ROS2 distribution. ROS2 must be sourced in every shell to access ROS2 commands. Use the following command to source ROS2:
+
+[source,bash,indent=1]
+----
+source /opt/ros/${ROS_DISTRO}/setup.bash
+----
+
+Next, follow these steps to create your colcon workspace:
+
+. Create the colcon workspace:
++
+[source,bash,indent=1]
+----
+mkdir -p ${colcon_workspace}/src
+----
+Replace ${colcon_workspace} with your custom directory path.
+
+. Move or clone the blickfeld_qb2_ros2_driver package into the `{colcon_workspace}/src` directory
+
+. Build your workspace:
++
+[source,bash,indent=1]
+----
+cd ${colcon_workspace}
+colcon build --symlink-install --cmake-clean-first --packages-up-to blickfeld_qb2_ros2_driver
+----
+
+IMPORTANT: Make sure to replace ${colcon_workspace} with your actual workspace path and follow these steps to successfully build the package.
+
+== Run
+
+The driver can be executed through several methods:
+
+* Using ROS2 component CLI to integrate it into an existing container named `/ComponentManager` (ROS2 component).
+* Utilizing ROS2 component CLI to operate it in standalone mode (ROS2 standalone component).
+* Employing ROS2 launch CLI (ROS2 launch).
+
+Below are examples to commence the live or snapshot nodes:
+
+
+=== Live driver
+
+* ROS2 component
++
+[source,bash,indent=1]
+----
+ros2 component load /ComponentManager blickfeld_qb2_ros2_driver blickfeld::ros_interop::Qb2Driver -p fqdn:="qb2"
+----
+
+* ROS2 standalone component
++
+[source,bash,indent=1]
+----
+ros2 component standalone blickfeld_qb2_ros2_driver blickfeld::ros_interop::Qb2Driver -p fqdn:="qb2"
+----
+
+* ROS2 launch
++
+[source,bash,indent=1]
+----
+ros2 launch blickfeld_qb2_ros2_driver blickfeld_qb2_ros2_driver.launch.py
+----
+
+=== Snapshot driver
+
+* ROS2 component
++
+[source,bash,indent=1]
+----
+ros2 component load /ComponentManager blickfeld_qb2_ros2_driver blickfeld::ros_interop::Qb2SnapshotDriver -p fqdns:="[qb2-1, qb2-2]" -p fqdn_frame_ids:="[qb2-1, qb2-2]" -p fqdn_point_cloud_topics:="[/bf/points_raw_1, /bf/points_raw_2]"
+----
+
+* ROS2 standalone component
++
+[source,bash,indent=1]
+----
+ros2 component standalone blickfeld_qb2_ros2_driver blickfeld::ros_interop::Qb2SnapshotDriver -p fqdns:="[qb2-1, qb2-2]" -p fqdn_frame_ids:="[qb2-1, qb2-2]" -p fqdn_point_cloud_topics:="[/bf/points_raw_1, /bf/points_raw_2]"
+----
+
+* ROS2 launch
++
+[source,bash,indent=1]
+----
+ros2 launch blickfeld_qb2_ros2_driver blickfeld_qb2_ros2_snapshot_driver.launch.py
+----
+
+== Parameters
+
+NOTE: The point cloud contains cartesian coordinates represented as individual FLOAT32 values for x, y, and z.
+
+=== Live driver
+
+IMPORTANT: The user is required to provide a valid address for connection, as no default value is available.
+
+|===
+| Argument | Default | Note 
+
+| *fqdn*
+| `` 
+| Fully qualified domain name: IP-address or host name of the Qb2 device which is to publish its point cloud.
+
+| *frame_id*
+| `lidar` 
+| The name of the TF frame (coordinate system) which is to be added to the point cloud message. 
+
+| *point_cloud_topic*
+| `/bf/points_raw` 
+| The topic for publishing the point cloud.
+
+| *use_measurement_timestamp*
+| `false` 
+| Select either the device timestamp or the ROS timestamp. By default, the setting is "false," which corresponds to the ROS timestamp. 
+
+| *publish_intensity*
+| `true` 
+| Select to publish the `intensity` (photon_count) of each point in addition to the x, y, and z as UINT32 value or not. By default, the setting is "true", which corresponds to publishing the intensity value.
+
+| *publish_point_id*
+| `true` 
+| Select to publish the `point_id` (direction_id) of each measurement in addition to the x, y, and z as UINT32 value or not. By default, the setting is "true", which corresponds to publishing the point_id.  
+|===
+
+=== Snapshot driver
+
+IMPORTANT: To establish a connection to the device in snapshot mode, the user must provide at least one valid 'fqdn', 'frame_id' and 'point_cloud_topic'. No default value are available for these parameters.
+
+IMPORTANT: The entry list for 'fqdns', 'fqdn_frame_ids' and 'fqdn_point_cloud_topics' should be the same size otherwise the driver will not start.
+
+
+|===
+| Argument | Default | Note 
+
+| *fqdns*
+| `[]`
+| Fully qualified domain name: IP-address or host name of the Qb2 device which is to publish its point cloud.
+
+| *fqdn_frame_ids*
+| `[]` 
+| The name of the TF frame (coordinate system) which is to be added to the point cloud message. 
+
+| *fqdn_point_cloud_topics*
+| `[]` 
+| The list of topics for publishing the point cloud of each fqdn.
+
+| *snapshot_frequency*
+| `0.1` 
+| The frequency (hz) to snapshot a point cloud from the Qb2s, this value should be something between [0, 0.1]. Use 0 to disable the snapshot frequency (the service call can still be used to manually trigger a snapshot).
+
+| *use_measurement_timestamp*
+| `false` 
+| Select either the device timestamp or the ROS timestamp. By default, the setting is "false," which corresponds to the ROS timestamp.
+
+| *publish_intensity*
+| `true` 
+| Select to publish the `intensity` (photon_count) of each point in addition to the x, y, and z as UINT32 value or not. By default, the setting is "true", which corresponds to publishing the intensity value.
+
+| *publish_point_id*
+| `true` 
+| Select to publish the `point_id` (direction_id) of each measurement in addition to the x, y, and z as UINT32 value or not. By default, the setting is "true", which corresponds to publishing the point_id. 
+|===
+
+
+== Services
+
+The snapshot driver offers a service call to manually trigger snapshots, in addition to the time based snapshots that can be configured using the 'snapshot_frequency' parameter.
+To manually trigger the snapshot, utilize the ROS2 service:
+
+[source,bash,indent=1]
+----
+ros2 service call /trigger_snapshot std_srvs/srv/Trigger
+----
+
+== License
+
+This package is released under a BSD 3-Clause License (see also https://opensource.org/licenses/BSD-3-Clause[https://opensource.org/licenses/BSD-3-Clause])
