@@ -1,9 +1,9 @@
 cmake_minimum_required(VERSION 3.5)
 project(blickfeld_qb2_ros2_driver)
 
-# Default to C++20
+# Default to C++17
 if(NOT CMAKE_CXX_STANDARD)
-  set(CMAKE_CXX_STANDARD 20)
+  set(CMAKE_CXX_STANDARD 17)
 endif()
 
 # Options
@@ -31,13 +31,15 @@ find_package(ament_cmake REQUIRED)
 find_package(ament_cmake_python REQUIRED)
 
 # find ROS2 dependencies
+find_package(Eigen3 3.3 REQUIRED NO_MODULE)
+find_package(diagnostic_msgs REQUIRED)
+find_package(diagnostic_updater REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(rclpy REQUIRED)
 find_package(rclcpp_components REQUIRED)
 find_package(std_msgs REQUIRED)
 find_package(sensor_msgs REQUIRED)
 find_package(std_srvs REQUIRED)
-find_package(Eigen3 3.3 REQUIRED NO_MODULE)
 
 if(BUILD_DEPLOYED_PROTOCOL)
   # fetch blickfeld API dependencies
@@ -63,11 +65,15 @@ target_include_directories(qb2_lidar_ros PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
   $<INSTALL_INTERFACE:include> 
   ${rclcpp_INCLUDE_DIRS}
+  ${diagnostic_msgs_INCLUDE_DIRS} 
+  ${diagnostic_updater_INCLUDE_DIRS} 
   ${std_msgs_INCLUDE_DIRS} 
   ${sensor_msgs_INCLUDE_DIRS})
 
 target_link_libraries(qb2_lidar_ros PUBLIC 
   ${rclcpp_LIBRARIES} 
+  ${diagnostic_msgs_LIBRARIES}
+  ${diagnostic_updater_LIBRARIES}
   ${std_msgs_LIBRARIES}
   ${sensor_msgs_LIBRARIES} 
   ${blickfeld-protocol})
@@ -80,12 +86,16 @@ target_include_directories(qb2_ros2_driver PUBLIC
   $<INSTALL_INTERFACE:include> 
   ${rclcpp_INCLUDE_DIRS}
   ${rclcpp_components_INCLUDE_DIRS}
+  ${diagnostic_msgs_INCLUDE_DIRS} 
+  ${diagnostic_updater_INCLUDE_DIRS} 
   ${std_msgs_INCLUDE_DIRS} 
   ${sensor_msgs_INCLUDE_DIRS})
 
   target_link_libraries(qb2_ros2_driver PUBLIC 
   ${rclcpp_LIBRARIES} 
   ${rclcpp_components_LIBRARIES}
+  ${diagnostic_msgs_LIBRARIES}
+  ${diagnostic_updater_LIBRARIES}
   ${std_msgs_LIBRARIES} 
   ${sensor_msgs_LIBRARIES} 
   ${blickfeld-protocol} 
@@ -103,6 +113,8 @@ target_include_directories(qb2_ros2_snapshot_driver PUBLIC
   $<INSTALL_INTERFACE:include>
   ${rclcpp_INCLUDE_DIRS}
   ${rclcpp_components_INCLUDE_DIRS}
+  ${diagnostic_msgs_INCLUDE_DIRS}
+  ${diagnostic_updater_INCLUDE_DIRS} 
   ${std_msgs_INCLUDE_DIRS}
   ${sensor_msgs_INCLUDE_DIRS}
   ${std_srvs_INCLUDE_DIRS})
@@ -110,10 +122,13 @@ target_include_directories(qb2_ros2_snapshot_driver PUBLIC
 target_link_libraries(qb2_ros2_snapshot_driver PUBLIC 
   ${rclcpp_LIBRARIES} 
   ${rclcpp_components_LIBRARIES}
+  ${diagnostic_msgs_LIBRARIES}
+  ${diagnostic_updater_LIBRARIES}
   ${std_msgs_LIBRARIES} 
   ${sensor_msgs_LIBRARIES}
   ${std_srvs_LIBRARIES} 
   ${blickfeld-protocol} 
+  Boost::system
   qb2_lidar_ros)
 
 target_compile_definitions(qb2_ros2_snapshot_driver PRIVATE "COMPOSITION_BUILDING_DLL")

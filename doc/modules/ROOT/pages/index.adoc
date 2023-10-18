@@ -36,19 +36,15 @@ Before proceeding, make sure to install the following dependencies on your syste
 * ROS2:
     ** https://docs.ros.org/en/foxy/Installation/Ubuntu-Install-Debians.html[ROS Foxy Installation]: Compatible with Ubuntu 20.04
     ** https://docs.ros.org/en/humble/Installation/Ubuntu-Install-Debians.html[ROS Humble Installation]: Compatible with Ubuntu 22.04 
+* https://index.ros.org/p/diagnostic_updater/[Diagnostic Updater]: Use debian package on Ubuntu 20.04 and greater
 * https://colcon.readthedocs.io/en/released/user/installation.html[Colcon]: Required for building the ROS workspace
-* https://protobuf.dev/[Protobuf]: >= v3.6.1 on Ubuntu 20.04 and newer versions, you can install protobuf using the system package manager:
+* https://protobuf.dev/[Protobuf]: >= v3.6.1, use debian package on Ubuntu 20.04 and greater
+* https://grpc.io/[gRPC]: >= v1.16.1, use debian package on Ubuntu 20.04 and greater
 +
 [source,bash,indent=1]
 ----
-sudo apt install libprotobuf-dev
-----
-
-* https://grpc.io/[gRPC]: gRPC can also be installed on Ubuntu 20.04 and newer versions using the system package manager 
-+
-[source,bash,indent=1]
-----
-sudo apt install libgrpc++-dev
+sudo apt update
+sudo apt install ros-${ROS_DISTRO}-diagnostic-updater libgrpc++-dev protobuf-compiler-grpc libprotobuf-dev
 ----
 
 == Build
@@ -212,6 +208,10 @@ IMPORTANT: The entry list for 'fqdns', 'fqdn_frame_ids' and 'fqdn_point_cloud_to
 | *publish_point_id*
 | `true` 
 | Select to publish the `point_id` (direction_id) of each measurement in addition to the x, y, and z as UINT32 value or not. By default, the setting is "true", which corresponds to publishing the point_id. 
+
+| *max_retries*
+| `3` 
+| The number or retries for getting point cloud from each Qb2 in case of failure during the snapshot trigger.
 |===
 
 
@@ -224,6 +224,48 @@ To manually trigger the snapshot, utilize the ROS2 service:
 ----
 ros2 service call /trigger_snapshot std_srvs/srv/Trigger
 ----
+
+== Diagnostic message
+
+|===
+| Field | Note
+
+| *device_fqdn*
+| The fqdn of the Qb2.
+
+| *connection_status*
+| True if the driver is connected to the Qb2, otherwise False.
+
+| *failed_connection_attempts*
+| The number of failed connection attempts to Qb2 since the start of the driver.
+
+| *connection_attempts_since_last_connection*
+| The number of connection attempts to Qb2 since the last successful connection.
+
+| *stream_status*
+| True if the point cloud stream channel is created between the driver and the Qb2, otherwise False. The snapshot driver does not open a stream.
+
+| *failed_opening_stream_attempts*
+| The number of failed attempts to open a point cloud stream to Qb2 since the start of the driver.
+
+| *opening_stream_attempts_since_last_opened_stream*
+| The number of attempts to open a point cloud stream to Qb2 since the last successful opened stream.
+
+| *last_frame_success*
+| True if the last frame was read successfully from the Qb2, otherwise False.
+
+| *last_frame_duration*
+| The time duration for reading the last frame from the Qb2.
+
+| *total_frames_published*
+| The total number of published point cloud frames by the driver since the start.
+
+| *total_frames_dropped*
+| The total number of frames that has been dropped since the start of the driver.
+
+| *total_reboots*
+| The total number of reboots of Qb2 since the start of the driver.
+|===
 
 == License
 

@@ -6,7 +6,8 @@ namespace blickfeld {
 namespace ros_interop {
 
 Qb2Driver::Qb2Driver(rclcpp::NodeOptions options)
-    : node_(std::make_shared<rclcpp::Node>("blickfeld_qb2_driver", options.use_intra_process_comms(true))) {
+    : node_(std::make_shared<rclcpp::Node>("blickfeld_qb2_driver", options.use_intra_process_comms(true))),
+      diagnostic_updater_(node_) {
   /// set params
   use_measurement_timestamp_ = node_->declare_parameter<bool>("use_measurement_timestamp", use_measurement_timestamp_);
   RCLCPP_INFO_STREAM(node_->get_logger(),
@@ -15,6 +16,9 @@ Qb2Driver::Qb2Driver(rclcpp::NodeOptions options)
   auto unix_socket = node_->declare_parameter<std::string>("unix_socket", "");
   auto frame_id = node_->declare_parameter<std::string>("frame_id", "lidar");
   auto point_cloud_topic = node_->declare_parameter<std::string>("point_cloud_topic", "~/point_cloud_out");
+
+  /// set the name of the driver as the hardwareID of the updater
+  diagnostic_updater_.setHardwareID("Blickfeld Qb2 Driver");
 
   /// figure out the host and method of connection
   if (unix_socket.empty() && fqdn.empty()) {
@@ -32,8 +36,9 @@ Qb2Driver::Qb2Driver(rclcpp::NodeOptions options)
     host = fqdn;
     use_socket_connection = false;
   }
-
-  qb2_ = std::make_unique<Qb2LidarRos>(node_, host, use_socket_connection, frame_id, point_cloud_topic);
+  const bool snapshot_mode = false;
+  qb2_ = std::make_unique<Qb2LidarRos>(node_, host, use_socket_connection, frame_id, point_cloud_topic, snapshot_mode,
+                                       diagnostic_updater_);
 
   /// launch thread for execution
   is_running_ = true;

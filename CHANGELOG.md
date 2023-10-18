@@ -10,7 +10,49 @@ Add ticket numbers to all your change notes.
 
 ### Changed
 
+### Fixed
+
 ### Removed
+
+## [1.1.3] - 2023.09.29
+
+### Fixed
+* Fixed the wrong usage of frame id of the qb2 frame
+
+## [1.1.2] - 2023.09.20
+
+### Changed
+* [#51146] Adapt buffer size for publisher and subscriber to 1
+
+### Fixed
+* [#51052] Fix the documentation of the dependencies 
+* [#51074] Fixed the diagnostic updater re-declaration of period parameter for Yocto
+* Fixed calculation of total dropped frames which would always show zero
+
+### Removed
+* Removed 'frames_dropped_since_last_frame' as we publish diagnostics on an independent frequency
+
+## [1.1.1] - 2023.09.05
+
+### Fixed
+* Fix the compile issue due to deprecated template bind in C++20, foxy packages should support max C++17
+
+## [1.1.0] - 2023.09.01
+
+### Added
+* [#50468] Added diagnostic updater for the snapshot node
+* [#50469] Added diagnostic updater for the stream node
+* [#50451] Adding retries to get the a point cloud from each Qb2 in snapshot mode incase of failure
+* [#50451] Adding a max_retries parameter for snapshot driver
+
+### Changed
+* [#50451] Adding deadline for grpc get api to avoid infinite wait in snapshot driver
+* [#50451] Disconnect from the Qb2 if the get api is not successful to allow the system to reconnect during the next try
+* [#50451] Fall back on reading one point cloud from stream in snapshot mode only if the get api throws an exception 
+
+### Fixed
+* [#50928] Fixes the crash of the snapshot driver on disconnect 
+* [#50451] Fixed the buffering of timer / service call for snapshot if the previous snapshot is in progress, the driver will drop/ignore the request if one snapshot is already in progress
 
 ## [1.0.0] - 2023.08.09
 
@@ -146,3 +188,4 @@ Add ticket numbers to all your change notes.
 
 ### Added
 * Initial changelog
+

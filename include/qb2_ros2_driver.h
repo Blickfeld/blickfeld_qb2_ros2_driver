@@ -55,6 +55,9 @@ class Qb2Driver {
   std::unique_ptr<Qb2LidarRos> qb2_;
   std::atomic<bool> is_running_{false};
   std::shared_ptr<std::thread> spin_thread_ = nullptr;
+
+  /// The Diagnostic Updater object to output device driver state
+  diagnostic_updater::Updater diagnostic_updater_;
 };
 
 }  // namespace ros_interop

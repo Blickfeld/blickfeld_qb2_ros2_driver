@@ -8,6 +8,7 @@
 #include "qb2_lidar_ros.h"
 #include "qb2_ros2_type.h"
 
+#include <boost/asio.hpp>
 #include <rclcpp/rclcpp.hpp>
 #include <rclcpp/time.hpp>
 #include <rclcpp/timer.hpp>
@@ -67,16 +68,24 @@ class Qb2SnapshotDriver {
 
   /**
    * @brief Get one frame form each qb2 and convert it to PointCloud2 and publish it
-   *
-   * @return true if successful
    */
-  bool snapshot();
+  void snapshot();
+
+  /**
+   * @brief Callback to handle running snapshot on a separate thread and return if the previous snapshot is not finished
+   *
+   * @return true if we could trigger a snapshot, false if one was already in progress
+   */
+  bool snapshotTriggerCallback();
 
   rclcpp::Node::SharedPtr node_;
 
   /// Flag to set if the ROS point cloud message should get the time stamp of the frame (measurement) or from
   /// ros::Time::now()
   bool use_measurement_timestamp_ = false;
+
+  /// Max number of tries to snapshot a point cloud from each qb2
+  uint8_t max_retries_ = 3;
 
   rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr trigger_snapshot_service_;
 
@@ -90,6 +99,13 @@ class Qb2SnapshotDriver {
 
   /// flag for running the device in snapshot mode
   static constexpr bool snapshot_mode_ = true;
+
+  /// Thread used to get the snapshot from Qb2s
+  boost::asio::thread_pool snapshot_thread_{1};
+  std::atomic<bool> snapshot_is_running_{false};
+
+  /// The Diagnostic Updater object to output device driver state
+  diagnostic_updater::Updater diagnostic_updater_;
 };
 
 }  // namespace ros_interop

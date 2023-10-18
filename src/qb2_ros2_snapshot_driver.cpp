@@ -9,9 +9,15 @@ namespace blickfeld {
 namespace ros_interop {
 
 Qb2SnapshotDriver::Qb2SnapshotDriver(rclcpp::NodeOptions options)
-    : node_(std::make_shared<rclcpp::Node>("blickfeld_qb2_snapshot_driver", options.use_intra_process_comms(true))) {
+    : node_(std::make_shared<rclcpp::Node>("blickfeld_qb2_snapshot_driver", options.use_intra_process_comms(true))),
+      diagnostic_updater_(node_) {
   /// setup parameters
   use_measurement_timestamp_ = node_->declare_parameter<bool>("use_measurement_timestamp", use_measurement_timestamp_);
+  max_retries_ = node_->declare_parameter<uint8_t>("max_retries", max_retries_);
+
+  /// set the name of the driver as the hardwareID of the updater
+  diagnostic_updater_.setHardwareID("Blickfeld Qb2 Snapshot Driver");
+
   RCLCPP_INFO_STREAM(node_->get_logger(),
                      "The 'use_measurement_timestamp' is set to: " << (use_measurement_timestamp_ ? "True" : "False"));
   const double snapshot_frequency = node_->declare_parameter<double>("snapshot_frequency", 0.1);
@@ -64,27 +70,35 @@ Qb2SnapshotDriver::Qb2SnapshotDriver(rclcpp::NodeOptions options)
   setupQb2sWithFqdns(fqdns, fqdn_frame_ids, fqdn_point_cloud_topics);
   setupQb2sWithUnixSockets(unix_sockets, unix_socket_frame_ids, unix_socket_point_cloud_topics);
 
-  /// create a timer to trigger the snapshot with a fixed frequency only of the snapshot_frequency is not 0
+  /// create a timer to trigger the snapshot with a fixed frequency only if the snapshot_frequency is not 0
   if (snapshot_frequency != 0) {
     std::chrono::duration<double> snapshot_duration(1. / snapshot_frequency);
-    snapshot_timer_ = node_->create_wall_timer(snapshot_duration, [this](rclcpp::TimerBase&) { this->snapshot(); });
+    snapshot_timer_ =
+        node_->create_wall_timer(snapshot_duration, [this](rclcpp::TimerBase&) { this->snapshotTriggerCallback(); });
   }
 
   /// setup a service to manually trigger the snapshot
   trigger_snapshot_service_ = node_->create_service<std_srvs::srv::Trigger>(
-      "trigger_snapshot",
-      [this](const std::shared_ptr<std_srvs::srv::Trigger::Request>,
-             std::shared_ptr<std_srvs::srv::Trigger::Response> response) { response->success = this->snapshot(); });
+      "trigger_snapshot", [this](const std::shared_ptr<std_srvs::srv::Trigger::Request>,
+                                 std::shared_ptr<std_srvs::srv::Trigger::Response> response) {
+        response->success = this->snapshotTriggerCallback();
+      });
+
+  /// HINT: In order to get a an immediate snapshot we call the function once
+  snapshotTriggerCallback();
 }
 
-Qb2SnapshotDriver::~Qb2SnapshotDriver() {}
+Qb2SnapshotDriver::~Qb2SnapshotDriver() {
+  snapshot_thread_.stop();
+  snapshot_thread_.join();
+}
 
 void Qb2SnapshotDriver::setupQb2sWithFqdns(const std::vector<std::string>& fqdns,
                                            const std::vector<std::string>& frame_ids,
                                            const std::vector<std::string>& point_cloud_topics) {
   for (size_t qb2_idx = 0; qb2_idx < fqdns.size(); ++qb2_idx) {
     qb2s_.emplace_back(std::make_unique<Qb2LidarRos>(node_, fqdns[qb2_idx], false, frame_ids[qb2_idx],
-                                                     point_cloud_topics[qb2_idx], snapshot_mode_));
+                                                     point_cloud_topics[qb2_idx], snapshot_mode_, diagnostic_updater_));
   }
 }
 
@@ -93,21 +107,41 @@ void Qb2SnapshotDriver::setupQb2sWithUnixSockets(const std::vector<std::string>&
                                                  const std::vector<std::string>& point_cloud_topics) {
   for (size_t qb2_idx = 0; qb2_idx < unix_sockets.size(); ++qb2_idx) {
     qb2s_.emplace_back(std::make_unique<Qb2LidarRos>(node_, unix_sockets[qb2_idx], true, frame_ids[qb2_idx],
-                                                     point_cloud_topics[qb2_idx], snapshot_mode_));
+                                                     point_cloud_topics[qb2_idx], snapshot_mode_, diagnostic_updater_));
   }
 }
 
-bool Qb2SnapshotDriver::snapshot() {
+bool Qb2SnapshotDriver::snapshotTriggerCallback() {
+  RCLCPP_DEBUG_STREAM(node_->get_logger(), "Try to get a snapshot if one is not running");
+  if (snapshot_is_running_ == false) {
+    boost::asio::post(snapshot_thread_, [&]() { this->snapshot(); });
+    return true;
+  } else {
+    RCLCPP_WARN_STREAM(node_->get_logger(), "Failed to trigger a snapshot. The last snapshot is still running.");
+    return false;
+  }
+}
+
+void Qb2SnapshotDriver::snapshot() {
+  snapshot_is_running_ = true;
   RCLCPP_DEBUG_STREAM(node_->get_logger(), "Snapshot a frame from all Qb2s.");
+
   /// read all frames
   std::vector<Qb2Frame> frames;
   for (auto& qb2 : qb2s_) {
     Qb2Frame frame;
-    auto success = qb2->readFrame(frame);
+    bool success = false;
+    uint8_t num_tries = 0;
+    do {
+      success = qb2->readFrame(frame);
+      num_tries++;
+    } while (success == false && num_tries < max_retries_);
+
     if (success == false) {
       RCLCPP_WARN_STREAM(node_->get_logger(),
                          "Failed reading the frame of Qb2: " << qb2->getHost() << ", Skipping the entire snapshot.");
-      return false;
+      snapshot_is_running_ = false;
+      return;
     }
     frames.emplace_back(std::move(frame));
   }
@@ -131,7 +165,8 @@ bool Qb2SnapshotDriver::snapshot() {
     frame_index++;
   }
   RCLCPP_DEBUG_STREAM(node_->get_logger(), "Published " << qb2s_.size() << " point clouds.");
-  return true;
+  snapshot_is_running_ = false;
+  return;
 }
 
 }  // namespace ros_interop

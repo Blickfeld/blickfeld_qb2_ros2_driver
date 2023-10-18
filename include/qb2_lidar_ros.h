@@ -13,9 +13,11 @@
 
 #include <grpc++/client_context.h>
 #include <grpc++/create_channel.h>
+#include <diagnostic_updater/diagnostic_updater.hpp>
 #include <rclcpp/rclcpp.hpp>
 #include <sensor_msgs/msg/point_cloud2.hpp>
 
+#include <chrono>
 #include <functional>
 #include <memory>
 #include <string>
@@ -44,9 +46,11 @@ class Qb2LidarRos {
    * @param[in] frame_id the ROS TF frame for publishing the point cloud
    * @param[in] point_cloud_topic the ROS topic for publishing the point cloud
    * @param[in] snapshot_mode the flag to use the Qb2 with snapshot or live stream mode
+   * @param[in, out]  diagnostic_updater the diagnostic updater for registering the diagnostic update function
    */
   Qb2LidarRos(rclcpp::Node::SharedPtr node, const std::string& host, const bool& use_socket_connection,
-              const std::string& frame_id, const std::string& point_cloud_topic, bool snapshot_mode = false);
+              const std::string& frame_id, const std::string& point_cloud_topic, bool snapshot_mode,
+              diagnostic_updater::Updater& diagnostic_updater);
 
   /**
    * @brief Destructor
@@ -73,7 +77,7 @@ class Qb2LidarRos {
    * @param[in] frame the data from Qb2
    * @param[in] timestamp the timestamp to set in point cloud header
    */
-  void publishFrame(const Qb2Frame& frame, rclcpp::Time timestamp) const;
+  void publishFrame(const Qb2Frame& frame, rclcpp::Time timestamp);
 
  private:
   /**
@@ -136,6 +140,13 @@ class Qb2LidarRos {
    */
   bool isStreaming() const;
 
+  /**
+   * @brief Updates status for the ros diagnostic updater
+   *
+   * @param[in, out] status the status to update in diagnostic updater
+   */
+  void updateDiagnostic(diagnostic_updater::DiagnosticStatusWrapper& status);
+
   rclcpp::Node::SharedPtr node_;
 
   /// host that we want to stream/get point cloud from this could be either fqdn or a unix socket
@@ -163,6 +174,122 @@ class Qb2LidarRos {
 
   /// Unique pointers for the point cloud stream of Qb2
   std::unique_ptr<grpc::ClientReader<Qb2PointCloudStreamResponse>> point_cloud_stream_ = nullptr;
+
+  /// Timeout of 60 second for qb2 api
+  static constexpr uint64_t qb2_api_timeout_ms_ = 60000;
+
+  struct DriverStatus {
+    uint64_t failed_connection_attempts_ = 0;
+    uint64_t connection_attempts_since_last_connection_ = 0;
+
+    uint64_t failed_opening_stream_attempts_ = 0;
+    uint64_t opening_stream_attempts_since_last_opened_stream_ = 0;
+
+    bool last_frame_success_ = false;
+    double last_frame_duration_ = 0.;
+
+    uint64_t total_frames_published_ = 0;
+
+    /// HINT: Qb2 frame id is the incremental number since start of the device/qb2 that will come with the Qb2Frame
+    uint64_t last_frame_id_ = 0;
+    uint64_t total_frames_dropped_ = 0;
+
+    uint64_t total_reboots_ = 0;
+
+    void onConnect() {
+      /// HINT: since connection was successful we reset the counter
+      connection_attempts_since_last_connection_ = 0;
+    }
+    void failedToConnect() {
+      failed_connection_attempts_++;
+      connection_attempts_since_last_connection_++;
+    }
+
+    void onOpeningStream() {
+      /// HINT: since stream was opened successfully we reset the counter
+      opening_stream_attempts_since_last_opened_stream_ = 0;
+    }
+    void failedToOpenStream() {
+      failed_opening_stream_attempts_++;
+      opening_stream_attempts_since_last_opened_stream_++;
+    }
+
+    void onPublishingFrame() { total_frames_published_++; }
+
+    /**
+     * @brief Updates the driver status struc based on the input after each frame this should be called
+     *
+     * @param[in] request_time the time of the sending the request
+     * @param[in] receive_time the time of the receiving the response
+     * @param[in] success the status of the request
+     * @param[in] frame_id the counter of the frame received from Qb2
+     * @param[in] snapshot_mode the mode that the driver is running
+     * @return true if reboot was detected otherwise false
+     */
+    bool updateDriverStatus(const std::chrono::system_clock::time_point& request_time,
+                            const std::chrono::system_clock::time_point& receive_time, bool success, uint64_t frame_id,
+                            bool snapshot_mode) {
+      auto reboot = updateRebootCounter(frame_id);
+      updateLastFrameStatus(request_time, receive_time, success, frame_id);
+      updateFrameDrop(snapshot_mode, frame_id);
+      return reboot;
+    }
+
+   private:
+    /**
+     * @brief Calculates the last frame request duration and set the status
+     *
+     * @param[in] request_time the time of the sending the request
+     * @param[in] receive_time the time of the receiving the response
+     * @param[in] success the status of the request
+     * @param[in] frame_id the counter of the frame of Qb2
+     */
+    void updateLastFrameStatus(const std::chrono::system_clock::time_point& request_time,
+                               const std::chrono::system_clock::time_point& receive_time, bool success,
+                               uint64_t frame_id) {
+      last_frame_duration_ = std::chrono::duration<double>(receive_time - request_time).count();
+      last_frame_success_ = success;
+      if (last_frame_id_ == 0) {
+        last_frame_id_ = frame_id;
+      }
+    }
+
+    /**
+     * @brief Calculate the number of detected reboots of the Qb2
+     *
+     * @param[in] frame_id The counter of the frame received from Qb2
+     * @return true if the reboot attempt was detected otherwise false
+     */
+    bool updateRebootCounter(uint64_t frame_id) {
+      const bool qb2_rebooted = frame_id < last_frame_id_;
+      if (qb2_rebooted == true) {
+        total_reboots_++;
+      }
+      return qb2_rebooted;
+    }
+
+    /**
+     * @brief Calculate and set the number of dropped frames
+     *
+     * @param[in] snapshot_mode the mode that the driver is running
+     * @param[in] frame_id the counter of the frame received from Qb2
+     */
+    void updateFrameDrop(bool snapshot_mode, uint64_t frame_id) {
+      if (last_frame_success_ == true) {
+        /// HINT: in stream mode we can calculate the dropped frames after receiving the first frame
+        if (frame_id > last_frame_id_ && snapshot_mode == false) {
+          /// HINT: if the difference between frame ids is 1 then we have not dropped any frames
+          total_frames_dropped_ += frame_id - last_frame_id_ - 1;
+        }
+        last_frame_id_ = frame_id;
+      } else {
+        if (snapshot_mode == true) {
+          total_frames_dropped_++;
+        }
+      }
+    }
+  };
+  DriverStatus driver_status_;
 };
 
 }  // namespace ros_interop
