@@ -1,231 +1,140 @@
 #include "qb2_lidar_ros.h"
-#include "qb2_ros2_utils.h"
 
-#include <blickfeld/hardware/client.h>
+#include "utility/qb2_ros2_utils.h"
+
+#include <blickfeld/base/grpc_defs.h>
 
 #include <grpc++/create_channel.h>
+#include <diagnostic_updater/publisher.hpp>
+
+#include <optional>
+#include <utility>
 
 namespace blickfeld {
 namespace ros_interop {
 
-Qb2LidarRos::Qb2LidarRos(rclcpp::Node::SharedPtr node, const std::string& host, const bool& use_socket_connection,
-                         const std::string& frame_id, const std::string& point_cloud_topic, bool snapshot_mode,
-                         diagnostic_updater::Updater& diagnostic_updater)
-    : node_(node),
-      host_(host),
-      use_socket_connection_(use_socket_connection),
-      frame_id_(frame_id),
-      point_cloud_topic_(point_cloud_topic),
-      snapshot_mode_(snapshot_mode) {
-  RCLCPP_INFO_STREAM(node_->get_logger(), "The 'host' is set to: " << host_);
-  RCLCPP_INFO_STREAM(node_->get_logger(), "The 'frame_id' is set to: " << frame_id_);
-  RCLCPP_INFO_STREAM(node_->get_logger(), "The 'point_cloud_topic' is set to: " << point_cloud_topic_);
-  /// setup parameters
-  if (node_->get_parameter("publish_intensity", point_fields_.intensity) == false) {
-    point_fields_.intensity = node_->declare_parameter<bool>("publish_intensity", point_fields_.intensity);
-  }
-  RCLCPP_INFO_STREAM(node_->get_logger(),
-                     "The 'publish_intensity' is set to: " << (point_fields_.intensity ? "True" : "False"));
+Qb2LidarRos::Qb2LidarRos(rclcpp::Node::SharedPtr node, const Qb2Info& qb2,
+                         diagnostic_updater::Updater& diagnostic_updater,
+                         std::unique_ptr<qb2::PointCloudReader> point_cloud_reader)
+    : node_(node), qb2_(qb2), driver_status_(qb2), point_cloud_reader_(std::move(point_cloud_reader)) {
+  RCLCPP_INFO_STREAM(node_->get_logger(), "The 'host' is set to: " << qb2_.hostName());
+  RCLCPP_INFO_STREAM(node_->get_logger(), "The 'frame_id' is set to: " << qb2_.point_cloud_info.frame_id);
+  RCLCPP_INFO_STREAM(node_->get_logger(), "The 'point_cloud_topic' is set to: " << qb2_.point_cloud_info.topic);
 
-  if (node_->get_parameter("publish_point_id", point_fields_.point_id) == false) {
-    point_fields_.point_id = node_->declare_parameter<bool>("publish_point_id", point_fields_.point_id);
-  }
-  RCLCPP_INFO_STREAM(node_->get_logger(),
-                     "The 'publish_point_id' is set to: " << (point_fields_.point_id ? "True" : "False"));
+  /// diagnostic updater
+  diagnostic_updater.add("Diagnostic message - " + qb2_.hostName(), &driver_status_, &DriverStatus::updateDiagnostic);
+
+  scan_pattern_watcher_ = std::make_unique<qb2::ScanPatternWatcher>(node, qb2);
+
+  /// HINT: Snapshot mode: The window size contains one snapshot plus a 10 second buffer for establishing the connection
+  /// with the devices. Live mode: The window size is 5 seconds
+  const int window_size = qb2_.snapshot.mode ? (1 / qb2_.snapshot.frame_rate) + 10 : 5;
+  diagnostic_updater::FrequencyStatusParam frequency_status(&frequency_, &frequency_, frequency_tolerance_,
+                                                            window_size);
+  diagnostic_updater::TimeStampStatusParam timestamp_delay;
 
   /// create the ros publisher
-  point_cloud_publisher_ = node_->create_publisher<sensor_msgs::msg::PointCloud2>(point_cloud_topic, 1);
+  point_cloud_publisher_raw_ = node_->create_publisher<sensor_msgs::msg::PointCloud2>(qb2_.point_cloud_info.topic, 1);
+  point_cloud_publisher_ = std::make_shared<diagnostic_updater::DiagnosedPublisher<sensor_msgs::msg::PointCloud2>>(
+      point_cloud_publisher_raw_, diagnostic_updater, frequency_status, timestamp_delay);
 
-  diagnostic_updater.add("Diagnostic message", this, &Qb2LidarRos::updateDiagnostic);
+  is_running_ = true;
+  /// thread to make sure connection is correctly established
+  boost::asio::post(worker_thread_pool_, [&]() { this->checkForHangingStreams(); });
+  /// thread for running the scan pattern watch
+  boost::asio::post(worker_thread_pool_, [&]() { this->watchScanPattern(); });
 }
-Qb2LidarRos::~Qb2LidarRos() { disconnect(); }
 
-const std::string& Qb2LidarRos::getHost() const { return host_; }
+Qb2LidarRos::~Qb2LidarRos() {
+  shutdownThreads();
 
-bool Qb2LidarRos::readFrame(Qb2Frame& frame) {
-  if (snapshot_mode_ == true) {
-    return getFrame(frame);
-  } else {
-    return readFrameFromStream(frame);
+  worker_thread_pool_.stop();
+  worker_thread_pool_.join();
+}
+
+void Qb2LidarRos::shutdownThreads() {
+  /// Call disconnect to stop all streams and communication with Qb2
+  disconnect();
+  {
+    std::lock_guard<std::mutex> guard(is_running_mutex_);
+    is_running_ = false;
   }
+  is_running_condition_variable_.notify_all();
+}
+
+const Qb2Info& Qb2LidarRos::getQb2Info() const { return qb2_; }
+
+std::optional<Qb2Frame> Qb2LidarRos::readFrame() {
+  std::optional<Qb2Frame> frame;
+  auto request_api_timestamp = std::chrono::high_resolution_clock::now();
+  CommunicationState communication_state = CommunicationState::NOT_DEFINED;
+  std::tie(communication_state, frame) = point_cloud_reader_->readFrame();
+  auto received_api_timestamp = std::chrono::high_resolution_clock::now();
+
+  uint64_t frame_id = frame.has_value() ? frame.value().id() : 0;
+  driver_status_.updateRuntimeStatus(frame_id, communication_state, request_api_timestamp, received_api_timestamp);
+
+  if (qb2::hasQb2CommunicationFailed(communication_state) == true) {
+    onCommunicationFailure();
+  }
+  return frame;
 }
 
 void Qb2LidarRos::publishFrame(const Qb2Frame& frame, rclcpp::Time timestamp) {
-  auto point_cloud = convertToPointCloudMsg(frame, frame_id_, point_fields_, timestamp);
+  auto point_cloud = convertToPointCloudMsg(frame, qb2_, timestamp);
   point_cloud_publisher_->publish(std::move(point_cloud));
+
   driver_status_.onPublishingFrame();
 }
 
-bool Qb2LidarRos::readFrameFromStream(Qb2Frame& frame) {
-  bool success = false;
-  std::chrono::system_clock::time_point request_read_api_timestamp;
-  std::chrono::system_clock::time_point received_read_api_timestamp;
-  /// (if connected or can connect successfully) and (if streaming or can open a frame stream) read a frame form Qb2
-  /// stream
-  if ((isConnected() == true || connect()) && (isStreaming() == true || openFrameStream())) {
-    Qb2PointCloudStreamResponse response;
-    request_read_api_timestamp = std::chrono::high_resolution_clock::now();
-    success = point_cloud_stream_->Read(&response);
-    received_read_api_timestamp = std::chrono::high_resolution_clock::now();
+void Qb2LidarRos::disconnect() {
+  /// HINT: these cancel calls are needed to interrupt the streams and tell the server that we are closing the
+  /// connection
+  point_cloud_reader_->cancel();
+  scan_pattern_watcher_->cancel();
 
-    if (success == true) {
-      /// prepare for 'stealing' the frame using swap.
-      response.mutable_frame()->Swap(&frame);
-    } else {
-      /// HINT: socket connection loss is much more severe than a network hiccup
-      if (use_socket_connection_ == true) {
-        RCLCPP_ERROR_STREAM(node_->get_logger(), "Failed to get data from socket: " << host_ << "!");
-      } else {
-        RCLCPP_WARN_STREAM(node_->get_logger(), "Failed to get data from fqdn: " << host_ << "!");
-      }
+  driver_status_.disconnect();
+}
+
+void Qb2LidarRos::checkForHangingStreams() {
+  while (is_running_ == true) {
+    if (driver_status_.isFrameTooOld() == true) {
+      RCLCPP_WARN_STREAM(node_->get_logger(),
+                         "Last frame from Qb2: " << qb2_.hostName() << " is too old, disconnecting!");
       disconnect();
     }
+    interruptableSleep();
   }
-
-  /// HINT: If no swap occurred frame is simply an empty initialized frame, meaning id returns 0
-  bool reboot_detected = driver_status_.updateDriverStatus(request_read_api_timestamp, received_read_api_timestamp,
-                                                           success, frame.id(), snapshot_mode_);
-  if (reboot_detected == true) {
-    RCLCPP_WARN_STREAM(node_->get_logger(), "Qb2 with fqdn: " << host_ << " has been rebooted!!!");
-  }
-
-  return success;
 }
 
-bool Qb2LidarRos::getFrame(Qb2Frame& frame) {
-  bool success = false;
-  std::chrono::system_clock::time_point request_get_api_timestamp;
-  std::chrono::system_clock::time_point received_get_api_timestamp;
-  /// if connected or can connect successfully get a frame from Qb2
-  if (isConnected() == true || connect()) {
-    /// HINT: try the GET point cloud API to get a single point cloud from Qb2
-    try {
-      grpc::ClientContext context;
-      auto deadline = std::chrono::system_clock::now() + std::chrono::milliseconds(qb2_api_timeout_ms_);
-      context.set_deadline(deadline);
-      Qb2PointCloudGetResponse response;
-      auto point_cloud_stub = core_processing::services::PointCloud::NewStub(qb2_channel_);
+void Qb2LidarRos::watchScanPattern() {
+  while (is_running_ == true) {
+    std::optional<Qb2ScanPattern> scan_pattern;
+    CommunicationState communication_state = CommunicationState::NOT_DEFINED;
+    std::tie(communication_state, scan_pattern) = scan_pattern_watcher_->watchScanPattern();
 
-      request_get_api_timestamp = std::chrono::high_resolution_clock::now();
-      auto status = point_cloud_stub->Get(&context, Qb2PointCloudGetRequest(), &response);
-      received_get_api_timestamp = std::chrono::high_resolution_clock::now();
-      /// success if status is ok
-      success = status.ok() ? true : false;
+    driver_status_.updateScanPattern(scan_pattern, communication_state);
 
-      if (success == true) {
-        /// prepare for 'stealing' the frame using swap.
-        response.mutable_frame()->Swap(&frame);
-        RCLCPP_DEBUG_STREAM(node_->get_logger(), "Got a point cloud from Qb2: " << host_ << ".");
-      } else {
-        RCLCPP_WARN_STREAM(node_->get_logger(), "Failed to get a point cloud from Qb2: "
-                                                    << host_ << " , due to grpc status: " << status.error_code()
-                                                    << " - " << status.error_message() << ".");
-        disconnect();
-      }
-    } catch (const std::runtime_error& exception) {
-      RCLCPP_WARN_STREAM(node_->get_logger(),
-                         "Failed to get a point cloud from Qb2: " << host_ << " , due to: " << exception.what() << ".");
-      /// HINT: GET API failed (maybe due to old firmware) try creating a temp stream and get one frame it
-      success = readFrameFromStream(frame);
-      closeFrameStream();
+    if (qb2::hasQb2CommunicationFailed(communication_state) == false) {
+      frequency_ = driver_status_.getTargetFrameRate();
+      RCLCPP_INFO_STREAM(node_->get_logger(), "Scan Pattern changed!");
+      RCLCPP_INFO_STREAM(node_->get_logger(), "Target frame rate: " << frequency_);
+    } else {
+      onCommunicationFailure();
     }
   }
-
-  bool reboot_detected = driver_status_.updateDriverStatus(request_get_api_timestamp, received_get_api_timestamp,
-                                                           success, frame.id(), snapshot_mode_);
-  if (reboot_detected == true) {
-    RCLCPP_WARN_STREAM(node_->get_logger(), "Qb2 with fqdn: " << host_ << " has been rebooted!!!");
-  }
-  return success;
 }
 
-bool Qb2LidarRos::connect() {
-  /// create the correct connection method
-  std::function<std::shared_ptr<grpc::Channel>()> connect_to_qb2;
-  if (use_socket_connection_ == true) {
-    connect_to_qb2 = [host = host_]() { return connectToUnixSocket(host); };
-  } else {
-    connect_to_qb2 = [host = host_]() { return hardware::connect_to_device(host); };
+void Qb2LidarRos::interruptableSleep() {
+  std::unique_lock<std::mutex> lock(is_running_mutex_);
+  if (is_running_ == true) {
+    is_running_condition_variable_.wait_for(lock, std::chrono::seconds(base::GRPC_DEFAULT_CONNECTION_TIMEOUT));
   }
-
-  /// create channel
-  /// TODO: this does not always have a deadline, if the device is not available it will throw an exception immediately
-  /// failed (insecure pre-handshake serial number fetch): Connect Failed.
-  try {
-    qb2_channel_ = connect_to_qb2();
-  } catch (const std::runtime_error& exception) {
-    RCLCPP_WARN_STREAM(node_->get_logger(),
-                       "Failed to connect to Qb2: " << host_ << " , due to: " << exception.what() << ".");
-    disconnect();
-    driver_status_.failedToConnect();
-    return false;
-  }
-  RCLCPP_INFO_STREAM(node_->get_logger(), "Connected to Qb2: " << host_ << ".");
-
-  driver_status_.onConnect();
-  return true;
 }
 
-void Qb2LidarRos::disconnect() {
-  closeFrameStream();
-  qb2_channel_ = nullptr;
-}
-
-bool Qb2LidarRos::isConnected() const { return qb2_channel_ ? true : false; }
-
-bool Qb2LidarRos::openFrameStream() {
-  /// renew stream context
-  stream_context_ = std::make_unique<grpc::ClientContext>();
-  try {
-    auto point_cloud_stub = core_processing::services::PointCloud::NewStub(qb2_channel_);
-    point_cloud_stream_ = point_cloud_stub->Stream(stream_context_.get(), Qb2PointCloudStreamRequest());
-  } catch (const std::runtime_error& exception) {
-    RCLCPP_WARN_STREAM(node_->get_logger(), "Failed to opened a point cloud stream to Qb2: "
-                                                << host_ << " , due to: " << exception.what() << "'.");
-    closeFrameStream();
-    driver_status_.failedToOpenStream();
-    return false;
-  }
-  RCLCPP_INFO_STREAM(node_->get_logger(), "Opened a point cloud stream to Qb2: " << host_ << ".");
-
-  driver_status_.onOpeningStream();
-  return true;
-}
-
-void Qb2LidarRos::closeFrameStream() {
-  point_cloud_stream_ = nullptr;
-  if (stream_context_ != nullptr) {
-    stream_context_->TryCancel();
-  }
-  stream_context_ = nullptr;
-}
-
-bool Qb2LidarRos::isStreaming() const { return point_cloud_stream_ ? true : false; }
-
-void Qb2LidarRos::updateDiagnostic(diagnostic_updater::DiagnosticStatusWrapper& status) {
-  if (isConnected() == true) {
-    status.summary(diagnostic_msgs::msg::DiagnosticStatus::OK, "Device is connected");
-  } else {
-    status.summary(diagnostic_msgs::msg::DiagnosticStatus::WARN, "Device is disconnected");
-  }
-  status.add("device_fqdn", host_);
-  status.add("connection_status", isConnected());
-  status.add("failed_connection_attempts", driver_status_.failed_connection_attempts_);
-  status.add("connection_attempts_since_last_connection", driver_status_.connection_attempts_since_last_connection_);
-
-  status.add("stream_status", isStreaming());
-  status.add("failed_opening_stream_attempts", driver_status_.failed_opening_stream_attempts_);
-  status.add("opening_stream_attempts_since_last_opened_stream",
-             driver_status_.opening_stream_attempts_since_last_opened_stream_);
-
-  status.add("last_frame_success", driver_status_.last_frame_success_);
-  status.add("last_frame_duration", driver_status_.last_frame_duration_);
-
-  status.add("total_frames_published", driver_status_.total_frames_published_);
-
-  status.add("total_frames_dropped", driver_status_.total_frames_dropped_);
-
-  status.add("total_reboots", driver_status_.total_reboots_);
+void Qb2LidarRos::onCommunicationFailure() {
+  disconnect();
+  interruptableSleep();
 }
 
 }  // namespace ros_interop

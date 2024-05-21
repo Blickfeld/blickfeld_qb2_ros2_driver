@@ -19,14 +19,12 @@ def generate_launch_description():
                 name="blickfeld_qb2_snapshot_driver",
                 parameters=[
                     {
-                        # HINT: ros2 doesn't allow passing empty lists.
-                        #     "unix_sockets": [],
-                        #     "unix_socket_frame_ids": [],
-                        #     "unix_socket_point_cloud_topics": [],
                         "fqdns": ["qb2_1", "qb2_2"],
+                        "fqdn_serial_numbers": ["XXXXXXXXX", "YYYYYYYYY"],
+                        "fqdn_application_keys": ["xxxxxxxxxxxxxxxxxxxxxxx", "yyyyyyyyyyyyyyyyyyy"],
                         "fqdn_frame_ids": ["qb2_1", "qb2_2"],
                         "fqdn_point_cloud_topics": ["/bf/points_raw_1", "/bf/points_raw_2"],
-                        "snapshot_frequency": 0.1,
+                        "snapshot_frame_rate": 0.1,
                         "use_measurement_timestamp": False,
                         "publish_intensity": True,
                         "publish_point_id": True,

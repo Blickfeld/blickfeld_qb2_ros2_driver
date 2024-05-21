@@ -49,22 +49,34 @@ class Qb2SnapshotDriver {
   /**
    * @brief Creates qb2 and append it to the list of qb2s
    *
-   * @param[in] fqdns the fqn of qb2 to use for connection
+   * @param[in] fqdns the fqdn of qb2s to use for connection
    * @param[in] frame_ids the frame id for each qb2
    * @param[in] point_cloud_topics the topic for each qb2 to publish its point cloud
+   * @param[in] snapshot_frame_rate the frame rate of snapshot
+   * @param[in] intensity the flag to publish intensity
+   * @param[in] point_id the flag to publish point_id
    */
-  void setupQb2sWithFqdns(const std::vector<std::string>& fqdns, const std::vector<std::string>& frame_ids,
-                          const std::vector<std::string>& point_cloud_topics);
+  void setupQb2Fqdns(const std::vector<std::string>& fqdns, const std::vector<std::string>& fqdn_serial_numbers,
+                     const std::vector<std::string>& fqdn_application_keys, const std::vector<std::string>& frame_ids,
+                     const std::vector<std::string>& point_cloud_topics, float snapshot_frame_rate, bool intensity,
+                     bool point_id);
 
   /**
-   * @brief
+   * @brief Creates qb2 and append it to the list of qb2s
    *
-   * @param[in] unix_sockets the unix socket of qb2 to use for connection
+   * @param[in] system_unix_sockets the system unix socket of qb2s to use for connection
+   * @param[in] core_processing_unix_sockets the core_processing unix socket of qb2s to use for connection
    * @param[in] frame_ids the frame id for each qb2
    * @param[in] point_cloud_topics the topic for each qb2 to publish its point cloud
+   * @param[in] snapshot_frame_rate the frame rate of snapshot
+   * @param[in] intensity the flag to publish intensity
+   * @param[in] point_id the flag to publish point_id
    */
-  void setupQb2sWithUnixSockets(const std::vector<std::string>& unix_sockets, const std::vector<std::string>& frame_ids,
-                                const std::vector<std::string>& point_cloud_topics);
+  void setupQb2UnixSockets(const std::vector<std::string>& system_unix_sockets,
+                           const std::vector<std::string>& core_processing_unix_sockets,
+                           const std::vector<std::string>& frame_ids,
+                           const std::vector<std::string>& point_cloud_topics, float snapshot_frame_rate,
+                           bool intensity, bool point_id);
 
   /**
    * @brief Get one frame form each qb2 and convert it to PointCloud2 and publish it
@@ -92,10 +104,10 @@ class Qb2SnapshotDriver {
   std::vector<std::unique_ptr<Qb2LidarRos>> qb2s_;
   rclcpp::TimerBase::SharedPtr snapshot_timer_;
 
-  /// snapshot cannot be faster than every 10 seconds (max frequency of 0.1)
-  static constexpr double max_allowed_snapshot_frequency_ = 0.1;
-  /// setting frequency to 0 means no timer based snapshot
-  static constexpr double min_allowed_snapshot_frequency_ = 0;
+  /// snapshot cannot be faster than every 10 seconds (max frame_rate of 0.1)
+  static constexpr double max_allowed_snapshot_frame_rate_ = 0.1;
+  /// setting frame_rate to 0 means no timer based snapshot
+  static constexpr double min_allowed_snapshot_frame_rate_ = 0;
 
   /// flag for running the device in snapshot mode
   static constexpr bool snapshot_mode_ = true;
@@ -106,6 +118,8 @@ class Qb2SnapshotDriver {
 
   /// The Diagnostic Updater object to output device driver state
   diagnostic_updater::Updater diagnostic_updater_;
+  diagnostic_updater::Heartbeat heartbeat_;
+  std::shared_ptr<diagnostic_updater::TimeStampStatus> stamp_status_;
 };
 
 }  // namespace ros_interop

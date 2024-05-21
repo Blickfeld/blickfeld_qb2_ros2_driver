@@ -1,13 +1,11 @@
-#include "qb2_ros2_utils.h"
+#include "utility/qb2_ros2_utils.h"
 
 #include <grpc++/client_context.h>
 
 namespace blickfeld {
 namespace ros_interop {
 
-std::unique_ptr<sensor_msgs::msg::PointCloud2> convertToPointCloudMsg(const Qb2Frame& frame,
-                                                                      const std::string& frame_id,
-                                                                      const PointFields& point_fields,
+std::unique_ptr<sensor_msgs::msg::PointCloud2> convertToPointCloudMsg(const Qb2Frame& frame, const Qb2Info& qb2,
                                                                       std::optional<rclcpp::Time> timestamp) {
   auto point_cloud = std::make_unique<sensor_msgs::msg::PointCloud2>();
 
@@ -28,13 +26,13 @@ std::unique_ptr<sensor_msgs::msg::PointCloud2> convertToPointCloudMsg(const Qb2F
   addPointCloudField<float>(std::ref(*point_cloud), "z", point_cloud->point_step,
                             sensor_msgs::msg::PointField::FLOAT32);
 
-  if (point_fields.intensity == true) {
-    /// TODO: intensity should be converted to UINT16 (as it is also published by Qb2) Sticking to the Blickfeld
-    /// PointCloud2 format here, which uses uint32
+  if (qb2.point_cloud_info.intensity == true) {
+    /// HINT: To stick to Blickfeld PointCloud2 format the intensity is published as UINT32 and not as UINT16 that is
+    /// published by Qb2 as photon count
     addPointCloudField<uint32_t>(std::ref(*point_cloud), "intensity", point_cloud->point_step,
                                  sensor_msgs::msg::PointField::UINT32);
   }
-  if (point_fields.point_id == true) {
+  if (qb2.point_cloud_info.point_id == true) {
     addPointCloudField<uint32_t>(std::ref(*point_cloud), "point_id", point_cloud->point_step,
                                  sensor_msgs::msg::PointField::UINT32);
   }
@@ -47,7 +45,7 @@ std::unique_ptr<sensor_msgs::msg::PointCloud2> convertToPointCloudMsg(const Qb2F
   point_cloud->data.resize(number_of_points * point_cloud->point_step);
 
   /// set point cloud message data
-  point_cloud->header.frame_id = frame_id;
+  point_cloud->header.frame_id = qb2.point_cloud_info.frame_id;
   point_cloud->is_dense = false;
   point_cloud->height = 1;
   point_cloud->width = number_of_points;
@@ -60,9 +58,9 @@ std::unique_ptr<sensor_msgs::msg::PointCloud2> convertToPointCloudMsg(const Qb2F
     assignField<float>(std::ref(*point_cloud), i, 1, cartesian[1]);
     assignField<float>(std::ref(*point_cloud), i, 2, cartesian[2]);
     /// intensity
-    if (point_fields.intensity == true) assignField<uint32_t>(std::ref(*point_cloud), i, 3, photon_count[0]);
+    if (qb2.point_cloud_info.intensity == true) assignField<uint32_t>(std::ref(*point_cloud), i, 3, photon_count[0]);
     /// point_id
-    if (point_fields.point_id == true) assignField<uint32_t>(std::ref(*point_cloud), i, 4, direction_id[0]);
+    if (qb2.point_cloud_info.point_id == true) assignField<uint32_t>(std::ref(*point_cloud), i, 4, direction_id[0]);
 
     // advance pointers
     cartesian = cartesian + 3;
@@ -72,24 +70,42 @@ std::unique_ptr<sensor_msgs::msg::PointCloud2> convertToPointCloudMsg(const Qb2F
   return point_cloud;
 }
 
-std::shared_ptr<grpc::Channel> connectToUnixSocket(const std::string& unix_socket_name,
-                                                   std::chrono::duration<unsigned int> timeout) {
-  const std::string unix_socket_target = "unix://" + unix_socket_name;
-  grpc::ClientContext context;
-  std::shared_ptr<grpc::Channel> channel = grpc::CreateChannel(unix_socket_target, grpc::InsecureChannelCredentials());
+std::string toString(CommunicationState state) {
+  switch (state) {
+    case CommunicationState::NOT_DEFINED:
+      return "NOT_DEFINED";
+      break;
+    case CommunicationState::SUCCESS_READ:
+      return "SUCCESS_READ";
+      break;
+    case CommunicationState::SUCCESS_OPEN_STREAM:
+      return "SUCCESS_OPEN_STREAM";
+      break;
+    case CommunicationState::FAIL_READ:
+      return "FAIL_READ";
+      break;
+    case CommunicationState::FAIL_NO_CONNECTION:
+      return "FAIL_NO_CONNECTION";
+      break;
+    case CommunicationState::FAIL_EXCEPTION:
+      return "FAIL_EXCEPTION";
+      break;
+    case CommunicationState::FAIL_AUTHENTICATION:
+      return "FAIL_AUTHENTICATION";
+      break;
+    case CommunicationState::DISCONNECTED:
+      return "DISCONNECTED";
+      break;
 
-  auto deadline = std::chrono::system_clock::now() + std::chrono::duration_cast<std::chrono::seconds>(timeout);
-  // Wait for connection
-  grpc_connectivity_state state;
-  while ((state = channel->GetState(true)) != GRPC_CHANNEL_READY && state != GRPC_CHANNEL_TRANSIENT_FAILURE) {
-    if (!channel->WaitForStateChange(state, deadline)) {
-      throw std::runtime_error("Connection to Qb2 device '" + unix_socket_target + "' failed. Deadline exceeded.");
-    }
+    default:
+      return "UNKNOWN";
+      break;
   }
-  if (state != grpc_connectivity_state::GRPC_CHANNEL_READY) {
-    throw std::runtime_error("Connection to Qb2 device '" + unix_socket_target + "' failed. Network failure.");
-  }
-  return channel;
+}
+
+bool didAuthenticationFail(const grpc::Status& status) {
+  return (std::string(status.error_message()).find("Authentication failed") != std::string::npos) ||
+         (std::string(status.error_message()).find("Token renewal failed") != std::string::npos);
 }
 
 }  // namespace ros_interop

@@ -10,8 +10,8 @@ The main function of the Qb2 ROS2 driver is to convert the point cloud data from
 
 Two nodes are available:
 
-. *Qb2Driver*: The live node connects to one Qb2 and publishes the point cloud based on the scan pattern frequency set on the device.
-. *Qb2SnapshotDriver*: The snapshot node can connect to multiple Qb2s and request single frames from all connected Qb2s based on the frequency configured for the node. The driver sequentially requests the point clouds from each device and publishes all point clouds onto their respective topics simultaneously and with the same timestamp.
+. *Qb2Driver*: The live node connects to one Qb2 and publishes the point cloud based on the scan pattern frame rate set on the device.
+. *Qb2SnapshotDriver*: The snapshot node can connect to multiple Qb2s and request single frames from all connected Qb2s based on the frame rate configured for the node. The driver sequentially requests the point clouds from each device and publishes all point clouds onto their respective topics simultaneously and with the same timestamp.
 
 == Supported devices
 
@@ -193,9 +193,9 @@ IMPORTANT: The entry list for 'fqdns', 'fqdn_frame_ids' and 'fqdn_point_cloud_to
 | `[]` 
 | The list of topics for publishing the point cloud of each fqdn.
 
-| *snapshot_frequency*
+| *snapshot_frame_rate*
 | `0.1` 
-| The frequency (hz) to snapshot a point cloud from the Qb2s, this value should be something between [0, 0.1]. Use 0 to disable the snapshot frequency (the service call can still be used to manually trigger a snapshot).
+| The frame rate (hz) to snapshot a point cloud from the Qb2s, this value should be something between [0, 0.1]. Use 0 to disable the snapshot frame rate (the service call can still be used to manually trigger a snapshot).
 
 | *use_measurement_timestamp*
 | `false` 
@@ -217,7 +217,7 @@ IMPORTANT: The entry list for 'fqdns', 'fqdn_frame_ids' and 'fqdn_point_cloud_to
 
 == Services
 
-The snapshot driver offers a service call to manually trigger snapshots, in addition to the time based snapshots that can be configured using the 'snapshot_frequency' parameter.
+The snapshot driver offers a service call to manually trigger snapshots, in addition to the time based snapshots that can be configured using the 'snapshot_frame_rate' parameter.
 To manually trigger the snapshot, utilize the ROS2 service:
 
 [source,bash,indent=1]
@@ -233,29 +233,29 @@ ros2 service call /trigger_snapshot std_srvs/srv/Trigger
 | *device_fqdn*
 | The fqdn of the Qb2.
 
-| *connection_status*
-| True if the driver is connected to the Qb2, otherwise False.
-
-| *failed_connection_attempts*
-| The number of failed connection attempts to Qb2 since the start of the driver.
-
-| *connection_attempts_since_last_connection*
-| The number of connection attempts to Qb2 since the last successful connection.
-
-| *stream_status*
-| True if the point cloud stream channel is created between the driver and the Qb2, otherwise False. The snapshot driver does not open a stream.
-
-| *failed_opening_stream_attempts*
-| The number of failed attempts to open a point cloud stream to Qb2 since the start of the driver.
-
-| *opening_stream_attempts_since_last_opened_stream*
-| The number of attempts to open a point cloud stream to Qb2 since the last successful opened stream.
-
 | *last_frame_success*
 | True if the last frame was read successfully from the Qb2, otherwise False.
 
 | *last_frame_duration*
 | The time duration for reading the last frame from the Qb2.
+
+| *horizontal_field_of_view*
+| The horizontal field of view of Qb2 based on the set scan pattern.
+
+| *vertical_field_of_view*
+| The vertical field of view of Qb2 based on the set scan pattern.
+
+| *scanlines_up*
+| The number of scanlines during the up-ramping phase of Qb2 based on the set scan pattern.
+
+| *scanlines_down*
+| The number of scanlines during the down-ramping phase of Qb2 based on the set scan pattern.
+
+| *angle_spacing*
+| The horizontal angle between two measurements on a scanline of Qb2 based on the set scan pattern.
+
+| *scan_pattern_frame_rate*
+| The frame rate of Qb2 based on the set scan pattern.
 
 | *total_frames_published*
 | The total number of published point cloud frames by the driver since the start.

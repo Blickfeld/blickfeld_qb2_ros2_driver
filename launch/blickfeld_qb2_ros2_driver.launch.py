@@ -19,6 +19,8 @@ def generate_launch_description():
                 parameters=[
                     {
                         "fqdn": "qb2",
+                        "serial_number": "XXXXXXXXX",
+                        "application_key": "YYYYYYYYYYYYYYYYYYYYYYYYYYYYYYY",
                         "frame_id": "lidar",
                         "point_cloud_topic": "/bf/points_raw",
                         "use_measurement_timestamp": False,

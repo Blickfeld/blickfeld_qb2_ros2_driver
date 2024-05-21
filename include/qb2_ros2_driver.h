@@ -8,6 +8,7 @@
 #include "qb2_lidar_ros.h"
 #include "qb2_ros2_type.h"
 
+#include <boost/asio.hpp>
 #include <rclcpp/rclcpp.hpp>
 #include <sensor_msgs/msg/point_cloud2.hpp>
 
@@ -53,11 +54,12 @@ class Qb2Driver {
   bool use_measurement_timestamp_ = false;
 
   std::unique_ptr<Qb2LidarRos> qb2_;
-  std::atomic<bool> is_running_{false};
-  std::shared_ptr<std::thread> spin_thread_ = nullptr;
+  boost::asio::thread_pool spin_thread_{1};
 
   /// The Diagnostic Updater object to output device driver state
   diagnostic_updater::Updater diagnostic_updater_;
+  diagnostic_updater::Heartbeat heartbeat_;
+  std::shared_ptr<diagnostic_updater::TimeStampStatus> stamp_status_;
 };
 
 }  // namespace ros_interop

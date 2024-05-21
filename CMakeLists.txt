@@ -56,10 +56,19 @@ else()
   find_package(daedalus-core-processing REQUIRED)
   # needed for connecting to device
   find_package(daedalus-hardware REQUIRED)
-  set(blickfeld-protocol blickfeld-base daedalus-core_processing-protocol daedalus-hardware)
+  find_package(daedalus-system REQUIRED)
+  set(blickfeld-protocol blickfeld-base daedalus-core_processing-protocol daedalus-hardware daedalus-system-protocol)
 endif()
 
-add_library(qb2_lidar_ros SHARED src/qb2_ros2_utils.cpp src/qb2_lidar_ros.cpp)
+add_library(qb2_lidar_ros SHARED 
+  src/qb2_lidar_ros.cpp
+  src/qb2/point_cloud_getter.cpp 
+  src/qb2/point_cloud_reader.cpp 
+  src/qb2/point_cloud_streamer.cpp 
+  src/qb2/scan_pattern_watcher.cpp 
+  src/utility/qb2_connection_utils.cpp
+  src/utility/qb2_ros2_utils.cpp
+  )
 
 target_include_directories(qb2_lidar_ros PUBLIC 
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>

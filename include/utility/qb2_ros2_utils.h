@@ -7,9 +7,6 @@
 
 #include "qb2_ros2_type.h"
 
-#include <blickfeld/base/grpc_defs.h>
-
-#include <grpc++/create_channel.h>
 #include <rclcpp/rclcpp.hpp>
 #include <rclcpp/time.hpp>
 #include <sensor_msgs/msg/point_cloud2.hpp>
@@ -59,27 +56,30 @@ __attribute__((always_inline)) inline void addPointCloudField(sensor_msgs::msg::
 /**
  * @brief Converts the frame into a sensor_msgs::PointCloud2 message
  * @param[in] frame the Qb2 frame/point cloud structure
- * @param[in] frame_id the frame id assigned to the point cloud message
- * @param[in] point_fields point fields to be added from frame into sensor_msgs::PointCloud2 in addition to (x,y,z)
+ * @param[in] qb2 the Qb2Info object to contain info of the Qb2 that produced the point cloud
  * @param[in] timestamp if provided the timestamp to set in point cloud header, otherwise the timestamp of the 'frame'
  * will be used
  * @return the point cloud message
  */
-std::unique_ptr<sensor_msgs::msg::PointCloud2> convertToPointCloudMsg(const Qb2Frame& frame,
-                                                                      const std::string& frame_id,
-                                                                      const PointFields& point_fields,
+std::unique_ptr<sensor_msgs::msg::PointCloud2> convertToPointCloudMsg(const Qb2Frame& frame, const Qb2Info& qb2,
                                                                       std::optional<rclcpp::Time> timestamp = {});
 
 /**
- * @brief Establishes a grpc channel to a unix socket
- * NOTE: The method throws a runtime error if the connection cannot be established
- * @param[in] unix_socket_name the path to the unix socket
- * @param[in] timeout longest duration to wait for a valid connection
- * @return the established grpc channel
+ * @brief Convert the communication state into a string
+ *
+ * @param state
+ * @return std::string
  */
-std::shared_ptr<grpc::Channel> connectToUnixSocket(
-    const std::string& unix_socket_name,
-    std::chrono::duration<unsigned int> timeout = base::GRPC_DEFAULT_CONNECTION_TIMEOUT);
+std::string toString(CommunicationState state);
+
+/**
+ * @brief Check the grpc status for the case of authetication failure in the error msg
+ *
+ * @param status
+ * @return true
+ * @return false
+ */
+bool didAuthenticationFail(const grpc::Status& status);
 
 }  // namespace ros_interop
 }  // namespace blickfeld

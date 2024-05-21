@@ -14,6 +14,34 @@ Add ticket numbers to all your change notes.
 
 ### Removed
 
+## [2.1.0] - 2024.02.29
+
+### Added
+* [#53002] Added user management support to the driver
+
+## [2.0.1] - 2024.02.13
+
+### Fixed
+* Fixed include issue for standalone build
+* Fixed the unix socket connection issue introduced in v2.0.0 due to communication with system for scan patten watch  
+
+## [2.0.0] - 2024.02.08
+
+### Added
+* [#52246] Added heartbeat and frequency output to diagnostic
+* [#52246] Added scan pattern watch and update/add scan pattern info to diagnostic
+* [#52246,#50662] Added a watchdog to monitor the connection to Qb2
+* [#51237] Added interface for point cloud reader and simplified the get/read from stream of frame
+
+### Changed
+* Updated internal module dependencies
+* Changed snapshot_frequency with snapshot_frame_rate for compatibility with scan pattern frame_rate
+* [#52209,#51091] Extracted the connection methods to Qb2 as a utility function to simplify the code base and allow for sleep between retries
+* Expanded the driver status to be self contained and handle all driver status functions
+
+### Removed
+* [#51237] Removed duplicated and unnecessary info from diagnostic
+
 ## [1.1.3] - 2023.09.29
 
 ### Fixed
@@ -25,7 +53,7 @@ Add ticket numbers to all your change notes.
 * [#51146] Adapt buffer size for publisher and subscriber to 1
 
 ### Fixed
-* [#51052] Fix the documentation of the dependencies 
+* [#51052] Fix the documentation of the dependencies
 * [#51074] Fixed the diagnostic updater re-declaration of period parameter for Yocto
 * Fixed calculation of total dropped frames which would always show zero
 
@@ -48,10 +76,10 @@ Add ticket numbers to all your change notes.
 ### Changed
 * [#50451] Adding deadline for grpc get api to avoid infinite wait in snapshot driver
 * [#50451] Disconnect from the Qb2 if the get api is not successful to allow the system to reconnect during the next try
-* [#50451] Fall back on reading one point cloud from stream in snapshot mode only if the get api throws an exception 
+* [#50451] Fall back on reading one point cloud from stream in snapshot mode only if the get api throws an exception
 
 ### Fixed
-* [#50928] Fixes the crash of the snapshot driver on disconnect 
+* [#50928] Fixes the crash of the snapshot driver on disconnect
 * [#50451] Fixed the buffering of timer / service call for snapshot if the previous snapshot is in progress, the driver will drop/ignore the request if one snapshot is already in progress
 
 ## [1.0.0] - 2023.08.09
